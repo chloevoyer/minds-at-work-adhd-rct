@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this R code, please cite it as below."
+authors:
+- family-names: "Voyer"
+  given-names: "Chloé"
+  orcid: "https://orcid.org/0009-0005-5182-109X"
+title: "Improving quality of work life in adults living with ADHD: A randomized controlled trial"
+version: 1.0.0
+date-released: 2025-07-02
+url: "https://github.com/chloevoyer/my-thesis"
+type: dataset
