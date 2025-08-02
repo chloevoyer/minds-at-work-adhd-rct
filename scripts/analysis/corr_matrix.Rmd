@@ -1,0 +1,320 @@
+---
+title: "Correlation Matrix with Lower Triangle Only"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = getwd())
+
+# Load required packages
+setwd(here::here())
+library(flextable)
+library(officer)
+
+# Load the cleaned correlation data
+corr_data <- read.csv("data/clean_data/corr_data.csv")
+
+# Select the variables
+my_vars <- c("sd_age", "sd_sex", "sd_adhd_mx", "ASRS_total", 
+             "QWLQ_total_pre", "QWLQ_total_post", "CFWQ_total_pre", "CFWQ_total_post")
+
+# Create a subset of your data
+selected_data <- corr_data[, my_vars]
+
+# Convert Group to numeric for correlation
+if(is.factor(selected_data$group) || is.character(selected_data$group)) {
+  selected_data_for_corr <- selected_data
+  selected_data_for_corr$group <- as.numeric(selected_data_for_corr$group)
+} else {
+  selected_data_for_corr <- selected_data
+}
+
+# Variable labels
+var_labels <- c(
+  "1. Age ^b", "2. Sex ^c", "3. Medicated ^d", "4. ASRS total score", 
+  "5. QWLQ total score (Pre)", "6. QWLQ total score (Post)", "7. CFWQ total score (Pre)", "8. CFWQ total score (Post)"
+)
+
+# Calculate means and SDs
+var_means <- sapply(selected_data, function(x) {
+  if(is.factor(x) || is.character(x)) {
+    return(NA)  # Skip mean calculation for categorical variables
+  } else {
+    return(mean(x, na.rm = TRUE))
+  }
+})
+
+var_sds <- sapply(selected_data, function(x) {
+  if(is.factor(x) || is.character(x)) {
+    return(NA)  # Skip SD calculation for categorical variables
+  } else {
+    return(sd(x, na.rm = TRUE))
+  }
+})
+
+# Calculate correlation matrix with p-values
+cor_result <- psych::corr.test(selected_data_for_corr)
+r_vals <- cor_result$r
+p_vals <- cor_result$p
+```
+
+```{r create-matrix, include=FALSE}
+# Create a formatted matrix with correlations in the LOWER triangle only
+n_vars <- length(var_labels)
+format_matrix <- matrix("", nrow = n_vars, ncol = n_vars)
+
+# Format means and SDs
+means_formatted <- sapply(var_means, function(x) {
+  if(is.na(x)) return("—")
+  formatted <- sprintf("%.2f", x)
+  gsub("^0\\.", ".", formatted)
+})
+
+sds_formatted <- sapply(var_sds, function(x) {
+  if(is.na(x)) return("—")
+  formatted <- sprintf("%.2f", x)
+  gsub("^0\\.", ".", formatted)
+})
+
+# Fill the matrix with properly formatted values
+for (i in 1:n_vars) {
+  for (j in 1:n_vars) {
+    if (i == j) {
+      # Diagonal - put a dash
+      format_matrix[i, j] <- "—"
+    } else if (i < j) {
+      # UPPER triangle - leave empty
+      format_matrix[i, j] <- ""
+    } else {
+      # LOWER triangle - format r value
+      r_value <- r_vals[i, j]
+      p_value <- p_vals[i, j]
+      
+      if(is.na(r_value)) {
+        format_matrix[i, j] <- ""
+        next
+      }
+      
+      # Format the correlation value
+      r_formatted <- sprintf("%.2f", r_value)
+      r_formatted <- gsub("^(-?)0\\.", "\\1.", r_formatted)  # Remove leading zeros for both positive and negative values
+      r_formatted <- gsub("-", "−", r_formatted)      # Proper negative symbol
+      
+      # Add significance stars
+      if (!is.na(p_value)) {
+        if (p_value < 0.001) {
+          format_matrix[i, j] <- paste0(r_formatted, "***")
+        } else if (p_value < 0.01) {
+          format_matrix[i, j] <- paste0(r_formatted, "**")
+        } else if (p_value < 0.05) {
+          format_matrix[i, j] <- paste0(r_formatted, "*")
+        } else if (p_value < 0.10) {
+          format_matrix[i, j] <- paste0(r_formatted, "†")
+        } else {
+          format_matrix[i, j] <- r_formatted
+        }
+      } else {
+        format_matrix[i, j] <- r_formatted
+      }
+    }
+  }
+}
+```
+
+```{r create-dataframe}
+# Calculate n for each variable (accounting for missing data)
+n_values <- sapply(selected_data, function(x) sum(!is.na(x)))
+
+# Create a data frame for our final table
+result_df <- data.frame(
+  Variable = var_labels,
+  n = n_values,
+  M = means_formatted,
+  SD = sds_formatted,
+  stringsAsFactors = FALSE
+)
+
+# Add the correlation columns from our formatted matrix
+for (i in 1:n_vars) {
+  result_df[[as.character(i)]] <- format_matrix[, i]
+}
+```
+
+```{r flextable-custom, results='asis'}
+# Create the flextable
+ft <- flextable(result_df)
+
+# Rename columns to use numbered format
+new_colnames <- c(
+  "Variable" = "Variable", 
+  "n" = "n", 
+  "M" = "M", 
+  "SD" = "SD"
+)
+
+# Add numbered correlation columns
+for (i in 1:length(var_labels)) {
+  new_colnames[as.character(i)] <- as.character(i)
+}
+
+# Apply the new column names
+ft <- set_header_labels(ft, values = new_colnames)
+
+# Format significance stars as superscript
+for (i in 4:ncol(result_df)) {
+  col_name <- colnames(result_df)[i]
+  
+  for (j in 1:nrow(result_df)) {
+    cell_value <- result_df[[col_name]][j]
+    
+    # Skip empty cells or non-correlation cells
+    if (is.na(cell_value) || cell_value == "" || cell_value == "—") {
+      next
+    }
+    
+    # Check if the cell has significance indicators
+    if (grepl("\\*{1,3}$|†$", cell_value)) {
+      base_value <- gsub("\\*{1,3}$|†$", "", cell_value)
+      
+      # Apply the right superscript formatting with bold for asterisks
+      if (grepl("\\*\\*\\*$", cell_value)) {
+        # Bold for significant values (3 stars)
+        ft <- compose(ft, i = j, j = i, 
+                     value = as_paragraph(
+                       as_chunk(base_value, props = fp_text(bold = TRUE, font.size = 8)), 
+                       as_sup(as_chunk("***", props = fp_text(bold = TRUE, font.size = 8)))
+                     ))
+      } else if (grepl("\\*\\*$", cell_value)) {
+        # Bold for significant values (2 stars)
+        ft <- compose(ft, i = j, j = i, 
+                     value = as_paragraph(
+                       as_chunk(base_value, props = fp_text(bold = TRUE, font.size = 8)), 
+                       as_sup(as_chunk("**", props = fp_text(bold = TRUE, font.size = 8)))
+                     ))
+      } else if (grepl("\\*$", cell_value)) {
+        # Bold for significant values (1 star)
+        ft <- compose(ft, i = j, j = i, 
+                     value = as_paragraph(
+                       as_chunk(base_value, props = fp_text(bold = TRUE, font.size = 8)), 
+                       as_sup(as_chunk("*", props = fp_text(bold = TRUE, font.size = 8)))
+                     ))
+      } else if (grepl("†$", cell_value)) {
+        # NO bold for values with cross (marginally significant)
+        ft <- compose(ft, i = j, j = i, 
+                     value = as_paragraph(
+                       as_chunk(base_value, props = fp_text(font.size = 8)),
+                       as_sup(as_chunk("†", props = fp_text(font.size = 8)))
+                     ))
+      }
+    }
+  }
+}
+
+# Format superscript in variable names (for age and sex)
+for (j in 1:nrow(result_df)) {
+  var_name <- result_df$Variable[j]
+  
+  if (grepl("\\^[a-z]", var_name)) {
+    # Extract the base text and superscript part
+    base_text <- gsub("\\^[a-z]", "", var_name)
+    sup_text <- gsub(".*\\^([a-z]).*", "\\1", var_name)
+    
+    # Compose the cell with superscript
+    ft <- compose(ft, i = j, j = 1, 
+                 value = as_paragraph(base_text, as_sup(sup_text)))
+  }
+}
+
+# Store the number of body rows for later use
+num_body_rows <- nrow(result_df)
+
+# Define paragraph formatting: Times New Roman, double-spaced (2.0)
+caption_par <- fp_par(line_spacing = 2)
+
+ft <- set_caption(
+  ft,
+  caption = as_paragraph(
+    as_chunk("Table 7", 
+             props = fp_text(font.family = "Times New Roman", bold = TRUE, font.size = 12), 
+             par.props = caption_par),
+    as_chunk("\nDescriptive Statistics at Baseline Assessment and Bivariate Correlations for Study Variables", 
+             props = fp_text(font.family = "Times New Roman", font.size = 12), 
+             par.props = caption_par)
+  ),
+  align_with_table = FALSE,
+  word_stylename = "Table Caption"
+)
+
+# Make sure the rest of the formatting still uses Arial
+ft <- font(ft, fontname = "Arial", part = "body")
+ft <- font(ft, fontname = "Arial", part = "header")
+
+# Bold headers
+ft <- bold(ft, part = "header")
+
+# Set borders
+ft <- border_remove(ft)
+ft <- hline_top(ft, part = "header", border = fp_border(color = "black", width = 1))
+ft <- hline_bottom(ft, part = "body", border = fp_border(color = "black", width = 1))
+ft <- hline_bottom(ft, part = "header", border = fp_border(color = "black", width = 1))
+
+# Add footnote
+footer1 <- as_paragraph(
+  as_i("Note."), " ",
+  as_i("N"), " = 57. ASRS = Adult ADHD Self-Report Scale, ",
+  "CFWQ = Cognitive Function at Work Questionnaire, ",
+  "QWLQ = Quality of Work Life Questionnaire."
+)
+
+footer2 <- as_paragraph(
+  as_sup("a "), "0 = control, 1 = intervention.",
+  as_sup("b "), "Age at baseline assessment. ",
+  as_sup("c "), "0 = female, 1 = male. ",
+  as_sup("d "), "0 = no, 1 = yes."
+)
+
+footer3 <- as_paragraph(
+  as_sup("†"), as_i("p"), " < .10, ",
+  as_sup("*"), as_i("p"), " < .05, ",
+  as_sup("**"), as_i("p"), " < .01, ",
+  as_sup("***"), as_i("p"), " < .001, two-tailed."
+)
+
+ft <- add_footer_lines(ft, values = footer1)
+ft <- add_footer_lines(ft, values = footer2)
+ft <- add_footer_lines(ft, values = footer3)
+ft <- font(ft, j = 1, part = "footer", fontname = "Times New Roman")
+
+# Set alignment
+ft <- align(ft, j = 1, align = "left", part = "all")
+ft <- align(ft, j = 2:4, align = "center", part = "all")
+ft <- align(ft, j = 5:ncol(result_df), align = "center", part = "all")
+
+# Adjust column widths to fit in portrait mode with 1-inch margins
+ft <- width(ft, j = 1, width = 1.9)  # Make variable column slightly narrower
+ft <- width(ft, j = 2, width = 0.4)    # n column (smaller)
+ft <- width(ft, j = 3:4, width = 0.5)  # Make M and SD columns more compact
+# Set correlation columns to be more compact
+for (i in 5:ncol(result_df)) {
+  ft <- width(ft, j = i, width = 0.4)
+}
+
+# Try smaller font for better fit
+ft <- fontsize(ft, size = 8, part = "header")
+ft <- fontsize(ft, size = 8, part = "body")
+ft <- fontsize(ft, size = 10, part = "footer")
+
+# Save to Word document in portrait mode with exactly 1-inch margins
+save_as_docx(
+  ft, 
+  path = "corr_matrix.docx",
+  pr_section = prop_section(
+    page_size = page_size(orient = "portrait"),  # Portrait orientation
+    page_margins = page_mar(bottom = 1, top = 1, right = 1, left = 1, 
+                           header = 0.5, footer = 0.5, gutter = 0),  # Exactly 1-inch margins
+    type = "continuous"
+  )
+)
+
+ft
+```
